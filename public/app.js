@@ -1,30 +1,47 @@
-'use strict';
+"use strict";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let currentFile    = null;
+let currentFile = null;
 let currentWorkout = null;
-let currentOutput  = null; // { blob, filename }
+let currentOutput = null; // { blob, filename }
+let mergedTrackpoints = null; // trackpoints after any supplemental merges (null = use currentWorkout's)
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 
-const dropZone        = document.getElementById('dropZone');
-const fileInput       = document.getElementById('fileInput');
-const optionsSection  = document.getElementById('optionsSection');
-const resultSection   = document.getElementById('resultSection');
-const errorSection    = document.getElementById('errorSection');
-const startDateInput  = document.getElementById('startDateInput');
-const convertBtn      = document.getElementById('convertBtn');
-const downloadBtn     = document.getElementById('downloadBtn');
-const resetBtn        = document.getElementById('resetBtn');
-const errorResetBtn   = document.getElementById('errorResetBtn');
-const errorMsg        = document.getElementById('errorMsg');
-const statsGrid       = document.getElementById('statsGrid');
-const chartWrap       = document.getElementById('chartWrap');
-const browseBtn       = document.getElementById('browseBtn');
-const uploadStravaBtn = document.getElementById('uploadStravaBtn');
-const uploadTpBtn     = document.getElementById('uploadTpBtn');
-const uploadStatus    = document.getElementById('uploadStatus');
+const dropZone = document.getElementById("dropZone");
+const fileInput = document.getElementById("fileInput");
+const optionsSection = document.getElementById("optionsSection");
+const resultSection = document.getElementById("resultSection");
+const errorSection = document.getElementById("errorSection");
+const startDateInput = document.getElementById("startDateInput");
+const convertBtn = document.getElementById("convertBtn");
+const downloadBtn = document.getElementById("downloadBtn");
+const resetBtn = document.getElementById("resetBtn");
+const errorResetBtn = document.getElementById("errorResetBtn");
+const errorMsg = document.getElementById("errorMsg");
+const statsGrid = document.getElementById("statsGrid");
+const chartWrap = document.getElementById("chartWrap");
+const hrCadChartWrap = document.getElementById("hrCadChartWrap");
+const browseBtn = document.getElementById("browseBtn");
+const uploadStravaBtn = document.getElementById("uploadStravaBtn");
+const uploadTpBtn = document.getElementById("uploadTpBtn");
+const uploadStatus = document.getElementById("uploadStatus");
+
+// Merge panel
+const mergeCard = document.getElementById("mergeCard");
+const mergeDropZone = document.getElementById("mergeDropZone");
+const mergeBrowseBtn = document.getElementById("mergeBrowseBtn");
+const mergeFileInput = document.getElementById("mergeFileInput");
+const mergePickerStep = document.getElementById("mergePickerStep");
+const mergeAlignStep = document.getElementById("mergeAlignStep");
+const mergeFileInfo = document.getElementById("mergeFileInfo");
+const mergeFields = document.getElementById("mergeFields");
+const mergeAlignDurations = document.getElementById("mergeAlignDurations");
+const mergeOffsetInput = document.getElementById("mergeOffsetInput");
+const mergeApplyBtn = document.getElementById("mergeApplyBtn");
+const mergeCancelBtn = document.getElementById("mergeCancelBtn");
+const mergeStatus = document.getElementById("mergeStatus");
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -39,38 +56,56 @@ function formatDuration(totalSec) {
 /** Convert a UTC Date to a value suitable for <input type="datetime-local"> */
 function toDatetimeLocalValue(date) {
   // datetime-local needs local time as YYYY-MM-DDTHH:MM
-  const pad = n => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-         `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
 }
 
 function showSection(id) {
-  ['optionsSection', 'resultSection', 'errorSection'].forEach(s => {
-    document.getElementById(s).hidden = (s !== id);
+  ["optionsSection", "resultSection", "errorSection"].forEach((s) => {
+    document.getElementById(s).hidden = s !== id;
   });
 }
 
 function hideAllSections() {
-  ['optionsSection', 'resultSection', 'errorSection'].forEach(s => {
+  ["optionsSection", "resultSection", "errorSection"].forEach((s) => {
     document.getElementById(s).hidden = true;
   });
 }
 
 function showError(message) {
   errorMsg.textContent = message;
-  showSection('errorSection');
+  showSection("errorSection");
 }
 
 function reset() {
-  currentFile    = null;
+  currentFile = null;
   currentWorkout = null;
-  currentOutput  = null;
-  fileInput.value = '';
+  currentOutput = null;
+  mergedTrackpoints = null;
+  fileInput.value = "";
   hideAllSections();
-  dropZone.classList.remove('drop-zone--active', 'drop-zone--loaded');
-  uploadStatus.hidden        = true;
-  uploadStatus.innerHTML     = '';
-  uploadStatus.dataset.state = '';
+  dropZone.classList.remove("drop-zone--active", "drop-zone--loaded");
+  uploadStatus.hidden = true;
+  uploadStatus.innerHTML = "";
+  uploadStatus.dataset.state = "";
+  resetMergePanel();
+}
+
+function resetMergePanel() {
+  mergeCard.hidden = true;
+  mergePickerStep.hidden = false;
+  mergeAlignStep.hidden = true;
+  mergeFileInput.value = "";
+  mergeOffsetInput.value = "0";
+  mergeFileInfo.innerHTML = "";
+  mergeFields.innerHTML = "";
+  mergeAlignDurations.innerHTML = "";
+  mergeStatus.hidden = true;
+  mergeStatus.innerHTML = "";
+  mergeStatus.dataset.state = "";
 }
 
 // ─── ZIP extraction ───────────────────────────────────────────────────────────
@@ -88,10 +123,10 @@ async function extractFromZip(arrayBuffer) {
       break;
     }
   }
-  if (eocdOffset === -1) throw new Error('Not a valid ZIP file.');
+  if (eocdOffset === -1) throw new Error("Not a valid ZIP file.");
 
-  const entryCount  = view.getUint16(eocdOffset + 10, true);
-  const cdOffset    = view.getUint32(eocdOffset + 16, true);
+  const entryCount = view.getUint16(eocdOffset + 10, true);
+  const cdOffset = view.getUint32(eocdOffset + 16, true);
 
   // Parse Central Directory to find .3dp entries
   const CD_SIG = 0x02014b50;
@@ -100,32 +135,45 @@ async function extractFromZip(arrayBuffer) {
 
   for (let i = 0; i < entryCount; i++) {
     if (view.getUint32(pos, true) !== CD_SIG) break;
-    const compression      = view.getUint16(pos + 10, true);
-    const compressedSize   = view.getUint32(pos + 20, true);
-    const fileNameLen      = view.getUint16(pos + 28, true);
-    const extraLen         = view.getUint16(pos + 30, true);
-    const commentLen       = view.getUint16(pos + 32, true);
+    const compression = view.getUint16(pos + 10, true);
+    const compressedSize = view.getUint32(pos + 20, true);
+    const fileNameLen = view.getUint16(pos + 28, true);
+    const extraLen = view.getUint16(pos + 30, true);
+    const commentLen = view.getUint16(pos + 32, true);
     const localHeaderOffset = view.getUint32(pos + 42, true);
-    const fileName = new TextDecoder().decode(bytes.slice(pos + 46, pos + 46 + fileNameLen));
+    const fileName = new TextDecoder().decode(
+      bytes.slice(pos + 46, pos + 46 + fileNameLen)
+    );
 
-    if (fileName.toLowerCase().endsWith('.3dp')) {
-      matches.push({ fileName, compression, compressedSize, localHeaderOffset });
+    if (fileName.toLowerCase().endsWith(".3dp")) {
+      matches.push({
+        fileName,
+        compression,
+        compressedSize,
+        localHeaderOffset,
+      });
     }
     pos += 46 + fileNameLen + extraLen + commentLen;
   }
 
-  if (matches.length === 0) throw new Error('No .3dp file found inside the ZIP.');
-  if (matches.length > 1)   throw new Error('Multiple .3dp files found in ZIP; please include only one.');
+  if (matches.length === 0)
+    throw new Error("No .3dp file found inside the ZIP.");
+  if (matches.length > 1)
+    throw new Error(
+      "Multiple .3dp files found in ZIP; please include only one."
+    );
 
   // Extract file data using the local file header to find the data start
-  const { fileName, compression, compressedSize, localHeaderOffset } = matches[0];
+  const { fileName, compression, compressedSize, localHeaderOffset } =
+    matches[0];
   const LFH_SIG = 0x04034b50;
-  if (view.getUint32(localHeaderOffset, true) !== LFH_SIG) throw new Error('Invalid local file header in ZIP.');
+  if (view.getUint32(localHeaderOffset, true) !== LFH_SIG)
+    throw new Error("Invalid local file header in ZIP.");
 
   const localFileNameLen = view.getUint16(localHeaderOffset + 26, true);
-  const localExtraLen    = view.getUint16(localHeaderOffset + 28, true);
-  const dataStart        = localHeaderOffset + 30 + localFileNameLen + localExtraLen;
-  const compressedData   = bytes.slice(dataStart, dataStart + compressedSize);
+  const localExtraLen = view.getUint16(localHeaderOffset + 28, true);
+  const dataStart = localHeaderOffset + 30 + localFileNameLen + localExtraLen;
+  const compressedData = bytes.slice(dataStart, dataStart + compressedSize);
 
   if (compression === 0) {
     // Stored — no decompression needed
@@ -134,7 +182,7 @@ async function extractFromZip(arrayBuffer) {
 
   if (compression === 8) {
     // Deflated — decompress with native DecompressionStream
-    const ds = new DecompressionStream('deflate-raw');
+    const ds = new DecompressionStream("deflate-raw");
     const writer = ds.writable.getWriter();
     const reader = ds.readable.getReader();
     writer.write(compressedData);
@@ -149,7 +197,10 @@ async function extractFromZip(arrayBuffer) {
     const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
     const data = new Uint8Array(totalLen);
     let offset = 0;
-    for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.length;
+    }
     return { fileName, data };
   }
 
@@ -161,23 +212,27 @@ async function extractFromZip(arrayBuffer) {
 async function handleFile(file) {
   if (!file) return;
 
-  if (file.name.toLowerCase().endsWith('.zip')) {
-    dropZone.classList.add('drop-zone--active');
+  if (file.name.toLowerCase().endsWith(".zip")) {
+    dropZone.classList.add("drop-zone--active");
     try {
       const ab = await file.arrayBuffer();
       const extracted = await extractFromZip(ab);
-      const inner = new File([extracted.data], extracted.fileName, { type: 'application/octet-stream' });
-      dropZone.classList.remove('drop-zone--active');
+      const inner = new File([extracted.data], extracted.fileName, {
+        type: "application/octet-stream",
+      });
+      dropZone.classList.remove("drop-zone--active");
       handleFile(inner);
     } catch (err) {
-      dropZone.classList.remove('drop-zone--active');
+      dropZone.classList.remove("drop-zone--active");
       showError(err.message);
     }
     return;
   }
 
-  if (!file.name.toLowerCase().endsWith('.3dp')) {
-    showError(`"${file.name}" does not appear to be a .3dp file. Please select a PerfPro file.`);
+  if (!file.name.toLowerCase().endsWith(".3dp")) {
+    showError(
+      `"${file.name}" does not appear to be a .3dp file. Please select a PerfPro file.`
+    );
     return;
   }
 
@@ -193,8 +248,8 @@ async function handleFile(file) {
     startDateInput.value = toDatetimeLocalValue(new Date());
   }
 
-  dropZone.classList.add('drop-zone--loaded');
-  showSection('optionsSection');
+  dropZone.classList.add("drop-zone--loaded");
+  showSection("optionsSection");
 }
 
 // ─── Platform defaults ───────────────────────────────────────────────────────
@@ -203,32 +258,44 @@ async function handleFile(file) {
 // `var PLATFORMS`, it simply reassigns this global. If config.js is absent or
 // fails to load, this fallback remains in effect and upload buttons stay hidden.
 /* eslint-disable no-var */
-var PLATFORMS = { strava: { enabled: false }, trainingpeaks: { enabled: false } };
+var PLATFORMS = {
+  strava: { enabled: false },
+  trainingpeaks: { enabled: false },
+};
 /* eslint-enable no-var */
 
 // ─── Platform upload ─────────────────────────────────────────────────────────
 
 function setUploadStatus(state, message, url) {
-  uploadStatus.hidden        = false;
+  uploadStatus.hidden = false;
   uploadStatus.dataset.state = state;
-  uploadStatus.innerHTML     = message +
-    (url ? ` <a href="${url}" target="_blank" rel="noopener">View on platform →</a>` : '');
+  uploadStatus.innerHTML =
+    message +
+    (url
+      ? ` <a href="${url}" target="_blank" rel="noopener">View on platform →</a>`
+      : "");
 }
 
 function startOAuth(platformKey) {
   if (!currentOutput) return;
   const cfg = PLATFORMS[platformKey];
 
-  currentOutput.blob.arrayBuffer().then(buffer => {
+  currentOutput.blob.arrayBuffer().then((buffer) => {
     const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    sessionStorage.setItem('pendingUpload', JSON.stringify({
-      content:  btoa(binary),
-      filename: currentOutput.filename,
-    }));
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++)
+      binary += String.fromCharCode(bytes[i]);
+    sessionStorage.setItem(
+      "pendingUpload",
+      JSON.stringify({
+        content: btoa(binary),
+        filename: currentOutput.filename,
+      })
+    );
 
-    const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+    const redirectUri = encodeURIComponent(
+      window.location.origin + window.location.pathname
+    );
     const authUrl =
       `${cfg.authUrl}?client_id=${cfg.clientId}` +
       `&redirect_uri=${redirectUri}` +
@@ -245,88 +312,103 @@ async function handleOAuthCallback(platformKey, code, blob, filename) {
   const cfg = PLATFORMS[platformKey];
   try {
     const tokenRes = await fetch(cfg.tokenUrl, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body:    new URLSearchParams({
-        client_id:     cfg.clientId,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: cfg.clientId,
         client_secret: cfg.clientSecret,
         code,
-        grant_type:    'authorization_code',
-        redirect_uri:  window.location.origin + window.location.pathname,
+        grant_type: "authorization_code",
+        redirect_uri: window.location.origin + window.location.pathname,
       }),
     });
-    if (!tokenRes.ok) throw new Error(`Token exchange failed (${tokenRes.status})`);
+    if (!tokenRes.ok)
+      throw new Error(`Token exchange failed (${tokenRes.status})`);
     const { access_token } = await tokenRes.json();
 
-    setUploadStatus('pending', `Uploading to ${cfg.name}…`);
+    setUploadStatus("pending", `Uploading to ${cfg.name}…`);
     await uploadFile(platformKey, access_token, blob, filename);
-
   } catch (err) {
-    setUploadStatus('error', `Upload failed: ${err.message}`);
+    setUploadStatus("error", `Upload failed: ${err.message}`);
   }
 }
 
 async function uploadFile(platformKey, accessToken, blob, filename) {
-  const cfg  = PLATFORMS[platformKey];
+  const cfg = PLATFORMS[platformKey];
   const form = new FormData();
 
-  if (platformKey === 'strava') {
-    const isFit = filename.toLowerCase().endsWith('.fit');
-    form.append('file',      blob, filename);
-    form.append('data_type', isFit ? 'fit' : 'tcx');
-    form.append('name',      filename.replace(/\.(tcx|fit)$/i, '').replace(/_/g, ' '));
+  if (platformKey === "strava") {
+    const isFit = filename.toLowerCase().endsWith(".fit");
+    form.append("file", blob, filename);
+    form.append("data_type", isFit ? "fit" : "tcx");
+    form.append(
+      "name",
+      filename.replace(/\.(tcx|fit)$/i, "").replace(/_/g, " ")
+    );
   } else {
-    form.append('file', blob, filename);
+    form.append("file", blob, filename);
   }
 
   const res = await fetch(cfg.uploadUrl, {
-    method:  'POST',
+    method: "POST",
     headers: { Authorization: `Bearer ${accessToken}` },
-    body:    form,
+    body: form,
   });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`${cfg.name} returned ${res.status}${detail ? ': ' + detail : ''}`);
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `${cfg.name} returned ${res.status}${detail ? ": " + detail : ""}`
+    );
   }
 
-  const activityUrl = platformKey === 'strava'
-    ? 'https://www.strava.com/athlete/training'
-    : 'https://app.trainingpeaks.com/';
+  const activityUrl =
+    platformKey === "strava"
+      ? "https://www.strava.com/athlete/training"
+      : "https://app.trainingpeaks.com/";
 
-  setUploadStatus('success', `Successfully uploaded to ${cfg.name}!`, activityUrl);
+  setUploadStatus(
+    "success",
+    `Successfully uploaded to ${cfg.name}!`,
+    activityUrl
+  );
 }
 
 // Check for OAuth callback on page load (fires after redirect back from platform)
 // Must run after DOMContentLoaded so that config.js has already executed and
 // PLATFORMS contains the real credentials (tokenUrl, uploadUrl, etc.).
-document.addEventListener('DOMContentLoaded', function checkOAuthCallback() {
+document.addEventListener("DOMContentLoaded", function checkOAuthCallback() {
   const params = new URLSearchParams(window.location.search);
-  const code   = params.get('code');
-  const state  = params.get('state');
-  const error  = params.get('error');
+  const code = params.get("code");
+  const state = params.get("state");
+  const error = params.get("error");
 
   if (!code && !error) return;
 
-  history.replaceState(null, '', window.location.pathname);
+  history.replaceState(null, "", window.location.pathname);
 
-  const pending = JSON.parse(sessionStorage.getItem('pendingUpload') || 'null');
-  sessionStorage.removeItem('pendingUpload');
+  const pending = JSON.parse(sessionStorage.getItem("pendingUpload") || "null");
+  sessionStorage.removeItem("pendingUpload");
 
   if (error || !pending || !state || !PLATFORMS[state]) {
-    showSection('resultSection');
-    setUploadStatus('error', `Authorization was cancelled or failed: ${error || 'unknown error'}`);
+    showSection("resultSection");
+    setUploadStatus(
+      "error",
+      `Authorization was cancelled or failed: ${error || "unknown error"}`
+    );
     return;
   }
 
   const binary = atob(pending.content);
-  const bytes  = new Uint8Array(binary.length);
+  const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const isFit  = pending.filename.toLowerCase().endsWith('.fit');
-  const blob   = new Blob([bytes], { type: isFit ? 'application/octet-stream' : 'application/xml' });
+  const isFit = pending.filename.toLowerCase().endsWith(".fit");
+  const blob = new Blob([bytes], {
+    type: isFit ? "application/octet-stream" : "application/xml",
+  });
   currentOutput = { blob, filename: pending.filename };
-  showSection('resultSection');
-  setUploadStatus('pending', `Connecting to ${PLATFORMS[state].name}…`);
+  showSection("resultSection");
+  setUploadStatus("pending", `Connecting to ${PLATFORMS[state].name}…`);
   handleOAuthCallback(state, code, blob, pending.filename);
 });
 
@@ -334,74 +416,80 @@ document.addEventListener('DOMContentLoaded', function checkOAuthCallback() {
 // The service worker intercepts the share POST, stores the file in the Cache
 // API under the key 'shared-file', and redirects here. We pick it up and feed
 // it into handleFile() so the conversion flow starts automatically.
-document.addEventListener('DOMContentLoaded', function checkSharedFile() {
-  if (!('caches' in window)) return;
-  caches.open('perfpro-v1').then(function(cache) {
-    return cache.match('shared-file').then(function(response) {
-      if (!response) return;
-      // Delete before processing so a page refresh does not re-trigger conversion
-      cache.delete('shared-file');
-      return response.arrayBuffer().then(function(buffer) {
-        const rawName = response.headers.get('X-File-Name') || 'shared.3dp';
-        const fileName = decodeURIComponent(rawName);
-        const mimeType = response.headers.get('Content-Type') || 'application/octet-stream';
-        handleFile(new File([buffer], fileName, { type: mimeType }));
+document.addEventListener("DOMContentLoaded", function checkSharedFile() {
+  if (!("caches" in window)) return;
+  caches
+    .open("perfpro-v1")
+    .then(function (cache) {
+      return cache.match("shared-file").then(function (response) {
+        if (!response) return;
+        // Delete before processing so a page refresh does not re-trigger conversion
+        cache.delete("shared-file");
+        return response.arrayBuffer().then(function (buffer) {
+          const rawName = response.headers.get("X-File-Name") || "shared.3dp";
+          const fileName = decodeURIComponent(rawName);
+          const mimeType =
+            response.headers.get("Content-Type") || "application/octet-stream";
+          handleFile(new File([buffer], fileName, { type: mimeType }));
+        });
       });
+    })
+    .catch(function (err) {
+      console.warn("[app] Could not read shared file:", err);
     });
-  }).catch(function(err) {
-    console.warn('[app] Could not read shared file:', err);
-  });
 });
 
 // Show a one-time install hint on iOS Safari (not in standalone mode).
 // Web Share Target only works once the PWA is added to the Home Screen.
-document.addEventListener('DOMContentLoaded', function showInstallHint() {
+document.addEventListener("DOMContentLoaded", function showInstallHint() {
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const isStandalone = window.navigator.standalone === true;
   if (!isIOS || isStandalone) return;
-  if (sessionStorage.getItem('installHintDismissed')) return;
+  if (sessionStorage.getItem("installHintDismissed")) return;
 
-  const hint = document.createElement('p');
-  hint.className = 'install-hint';
+  const hint = document.createElement("p");
+  hint.className = "install-hint";
   hint.innerHTML =
-    'Tip: tap <strong>Share \u2197</strong> then <strong>Add to Home Screen</strong> ' +
-    'to share .3dp files directly from Mail or Files. ' +
+    "Tip: tap <strong>Share \u2197</strong> then <strong>Add to Home Screen</strong> " +
+    "to share .3dp files directly from Mail or Files. " +
     '<button type="button" class="install-hint__dismiss">Got it</button>';
-  hint.querySelector('.install-hint__dismiss').addEventListener('click', function() {
-    sessionStorage.setItem('installHintDismissed', '1');
-    hint.remove();
-  });
-  document.getElementById('dropZone').appendChild(hint);
+  hint
+    .querySelector(".install-hint__dismiss")
+    .addEventListener("click", function () {
+      sessionStorage.setItem("installHintDismissed", "1");
+      hint.remove();
+    });
+  document.getElementById("dropZone").appendChild(hint);
 });
 
 // ─── Drag and drop ───────────────────────────────────────────────────────────
 
-dropZone.addEventListener('dragover', e => {
+dropZone.addEventListener("dragover", (e) => {
   e.preventDefault();
-  dropZone.classList.add('drop-zone--active');
+  dropZone.classList.add("drop-zone--active");
 });
 
-dropZone.addEventListener('dragleave', () => {
-  dropZone.classList.remove('drop-zone--active');
+dropZone.addEventListener("dragleave", () => {
+  dropZone.classList.remove("drop-zone--active");
 });
 
-dropZone.addEventListener('drop', e => {
+dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
-  dropZone.classList.remove('drop-zone--active');
+  dropZone.classList.remove("drop-zone--active");
   const file = e.dataTransfer.files[0];
   handleFile(file);
 });
 
-dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener("click", () => fileInput.click());
 
 // Browse button: open file picker without letting the click bubble to dropZone
 // (which would call fileInput.click() a second time and cancel the dialog).
-browseBtn.addEventListener('click', e => {
+browseBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   fileInput.click();
 });
 
-fileInput.addEventListener('change', () => {
+fileInput.addEventListener("change", () => {
   handleFile(fileInput.files[0]);
 });
 
@@ -410,8 +498,12 @@ fileInput.addEventListener('change', () => {
 function buildPowerChart(trackpoints, stats) {
   const hasSpeed = stats.totalDistMeters > 0;
 
-  const VW = 640, VH = 210;
-  const padL = 52, padR = hasSpeed ? 58 : 20, padT = 18, padB = 38;
+  const VW = 640,
+    VH = 210;
+  const padL = 52,
+    padR = hasSpeed ? 58 : 20,
+    padT = 18,
+    padB = 38;
   const plotW = VW - padL - padR;
   const plotH = VH - padT - padB;
 
@@ -419,13 +511,17 @@ function buildPowerChart(trackpoints, stats) {
 
   // ── Power scale (left Y) ─────────────────────────────────────────────────
   const yMax = Math.max(50, Math.ceil(stats.maxWatts / 50) * 50);
-  const avgW  = stats.avgWatts;
+  const avgW = stats.avgWatts;
 
-  const sx  = sec   => padL + (sec   / maxSec) * plotW;
-  const syW = watts => padT + plotH  - (watts  / yMax)  * plotH;
+  const sx = (sec) => padL + (sec / maxSec) * plotW;
+  const syW = (watts) => padT + plotH - (watts / yMax) * plotH;
 
   // ── Speed data (right Y) ─────────────────────────────────────────────────
-  let speedLinePath = '', speedYLabels = '', speedRightAxis = '', speedTitle = '', legend = '';
+  let speedLinePath = "",
+    speedYLabels = "",
+    speedRightAxis = "",
+    speedTitle = "",
+    legend = "";
 
   if (hasSpeed) {
     // Instantaneous speed (m/s → mph) from per-second cumulative distance deltas
@@ -434,7 +530,10 @@ function buildPowerChart(trackpoints, stats) {
       const prev = trackpoints[i - 1];
       if (prev.distMeters === null) return { sec: tp.sec, mph: 0 };
       const deltaSec = tp.sec - prev.sec;
-      const mph = deltaSec > 0 ? ((tp.distMeters - prev.distMeters) / deltaSec) * 2.23694 : 0;
+      const mph =
+        deltaSec > 0
+          ? ((tp.distMeters - prev.distMeters) / deltaSec) * 2.23694
+          : 0;
       return { sec: tp.sec, mph: Math.max(0, mph) };
     });
 
@@ -442,26 +541,44 @@ function buildPowerChart(trackpoints, stats) {
     const HALF = 2;
     const speedPoints = raw.map((d, i) => {
       const slice = raw.slice(Math.max(0, i - HALF), i + HALF + 1);
-      return { sec: d.sec, mph: slice.reduce((s, v) => s + v.mph, 0) / slice.length };
+      return {
+        sec: d.sec,
+        mph: slice.reduce((s, v) => s + v.mph, 0) / slice.length,
+      };
     });
 
-    const speedMax = Math.max(5, Math.ceil(Math.max(...speedPoints.map(d => d.mph)) / 5) * 5);
-    const syS = mph => padT + plotH - (mph / speedMax) * plotH;
+    const speedMax = Math.max(
+      5,
+      Math.ceil(Math.max(...speedPoints.map((d) => d.mph)) / 5) * 5
+    );
+    const syS = (mph) => padT + plotH - (mph / speedMax) * plotH;
 
     // Right Y axis labels
     const sStep = speedMax <= 20 ? 5 : speedMax <= 40 ? 10 : 15;
     for (let v = 0; v <= speedMax; v += sStep) {
       const y = syS(v).toFixed(2);
-      speedYLabels += `<text x="${VW - padR + 8}" y="${y}" dy="0.35em">${v}</text>`;
+      speedYLabels += `<text x="${
+        VW - padR + 8
+      }" y="${y}" dy="0.35em">${v}</text>`;
     }
 
-    speedRightAxis = `<line class="chart__axis" x1="${VW - padR}" y1="${padT}" x2="${VW - padR}" y2="${padT + plotH}" />`;
-    speedTitle     = `<text class="chart__axis-title" x="${VW - padR}" y="${padT - 6}" text-anchor="middle">mph</text>`;
+    speedRightAxis = `<line class="chart__axis" x1="${
+      VW - padR
+    }" y1="${padT}" x2="${VW - padR}" y2="${padT + plotH}" />`;
+    speedTitle = `<text class="chart__axis-title" x="${VW - padR}" y="${
+      padT - 6
+    }" text-anchor="middle">mph</text>`;
 
     // Speed line path
     speedLinePath = speedPoints
-      .map((d, i) => (i === 0 ? 'M' : 'L') + sx(d.sec).toFixed(2) + ',' + syS(d.mph).toFixed(2))
-      .join(' ');
+      .map(
+        (d, i) =>
+          (i === 0 ? "M" : "L") +
+          sx(d.sec).toFixed(2) +
+          "," +
+          syS(d.mph).toFixed(2)
+      )
+      .join(" ");
 
     legend = `
   <g class="chart__legend" transform="translate(${padL + 8}, ${padT + 8})">
@@ -479,39 +596,48 @@ function buildPowerChart(trackpoints, stats) {
     const y = syW(tp.watts).toFixed(2);
     lineParts.push(i === 0 ? `M${x},${y}` : `L${x},${y}`);
   });
-  const linePath = lineParts.join(' ');
+  const linePath = lineParts.join(" ");
 
   const firstX = sx(trackpoints[0].sec).toFixed(2);
-  const lastX  = sx(trackpoints[trackpoints.length - 1].sec).toFixed(2);
-  const baseY  = (padT + plotH).toFixed(2);
+  const lastX = sx(trackpoints[trackpoints.length - 1].sec).toFixed(2);
+  const baseY = (padT + plotH).toFixed(2);
   const areaPath = `${linePath} L${lastX},${baseY} L${firstX},${baseY} Z`;
 
   // ── Power Y axis ticks ────────────────────────────────────────────────────
   const yStep = yMax <= 200 ? 50 : yMax <= 400 ? 100 : 150;
-  let gridLines = '', yLabels = '';
+  let gridLines = "",
+    yLabels = "";
   for (let w = 0; w <= yMax; w += yStep) {
     const y = syW(w).toFixed(2);
     gridLines += `<line x1="${padL}" y1="${y}" x2="${VW - padR}" y2="${y}" />`;
-    yLabels   += `<text x="${padL - 8}" y="${y}" dy="0.35em">${w}</text>`;
+    yLabels += `<text x="${padL - 8}" y="${y}" dy="0.35em">${w}</text>`;
   }
 
   // ── X axis ticks (every 10 min, or every 5 min for short rides) ──────────
   const xTickInterval = maxSec <= 1800 ? 300 : 600;
-  let xLabels = '';
+  let xLabels = "";
   for (let s = 0; s <= maxSec; s += xTickInterval) {
-    const x   = sx(s).toFixed(2);
+    const x = sx(s).toFixed(2);
     const min = Math.floor(s / 60);
     xLabels += `<text x="${x}" y="${padT + plotH + 20}">${min}m</text>`;
   }
 
   // ── Average power line ────────────────────────────────────────────────────
-  const avgY    = syW(avgW).toFixed(2);
-  const avgLine = `<line class="chart__avg-line" x1="${padL}" y1="${avgY}" x2="${VW - padR}" y2="${avgY}" />`;
+  const avgY = syW(avgW).toFixed(2);
+  const avgLine = `<line class="chart__avg-line" x1="${padL}" y1="${avgY}" x2="${
+    VW - padR
+  }" y2="${avgY}" />`;
   // Avg label only shown in single-axis mode; right side is occupied by speed axis when dual
-  const avgLabel = hasSpeed ? '' : `<text class="chart__avg-label" x="${VW - padR + 4}" y="${avgY}" dy="0.35em">${avgW}W</text>`;
+  const avgLabel = hasSpeed
+    ? ""
+    : `<text class="chart__avg-label" x="${
+        VW - padR + 4
+      }" y="${avgY}" dy="0.35em">${avgW}W</text>`;
 
   return `
-<svg class="power-chart" viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg" aria-label="Power${hasSpeed ? ' and speed' : ''} chart">
+<svg class="power-chart" viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg" aria-label="Power${
+    hasSpeed ? " and speed" : ""
+  } chart">
   <defs>
     <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%"   stop-color="#4f8ef7" stop-opacity="0.35" />
@@ -533,24 +659,39 @@ function buildPowerChart(trackpoints, stats) {
   </g>
 
   <!-- Speed line -->
-  ${hasSpeed ? `<g clip-path="url(#plotClip)"><path class="chart__speed-line" d="${speedLinePath}" /></g>` : ''}
+  ${
+    hasSpeed
+      ? `<g clip-path="url(#plotClip)"><path class="chart__speed-line" d="${speedLinePath}" /></g>`
+      : ""
+  }
 
   <!-- Avg label (single-axis mode only) -->
   ${avgLabel}
 
   <!-- Axes -->
-  <line class="chart__axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" />
-  <line class="chart__axis" x1="${padL}" y1="${padT + plotH}" x2="${VW - padR}" y2="${padT + plotH}" />
+  <line class="chart__axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${
+    padT + plotH
+  }" />
+  <line class="chart__axis" x1="${padL}" y1="${padT + plotH}" x2="${
+    VW - padR
+  }" y2="${padT + plotH}" />
   ${speedRightAxis}
 
   <!-- Labels -->
   <g class="chart__y-labels">${yLabels}</g>
   <g class="chart__x-labels">${xLabels}</g>
-  ${hasSpeed ? `<g class="chart__y-labels chart__y-labels--right">${speedYLabels}</g>` : ''}
+  ${
+    hasSpeed
+      ? `<g class="chart__y-labels chart__y-labels--right">${speedYLabels}</g>`
+      : ""
+  }
 
   <!-- Axis titles -->
   <text class="chart__axis-title chart__axis-title--y"
-        transform="rotate(-90) translate(${-(padT + plotH / 2)}, 12)">Watts</text>
+        transform="rotate(-90) translate(${-(
+          padT +
+          plotH / 2
+        )}, 12)">Watts</text>
   <text class="chart__axis-title chart__axis-title--x"
         x="${padL + plotW / 2}" y="${VH - 2}">Time</text>
   ${speedTitle}
@@ -560,13 +701,272 @@ function buildPowerChart(trackpoints, stats) {
 </svg>`.trim();
 }
 
+// ─── HR / Cadence chart ───────────────────────────────────────────────────────
+
+function buildHrCadenceChart(trackpoints, durationSec) {
+  const hrPoints = trackpoints.filter((tp) => tp.hr !== null);
+  const cadPoints = trackpoints.filter((tp) => tp.cadence !== null);
+  const hasHR = hrPoints.length > 0;
+  const hasCad = cadPoints.length > 0;
+  if (!hasHR && !hasCad) return null;
+
+  const VW = 640,
+    VH = 160;
+  const padL = 52,
+    padR = hasCad ? 58 : 20,
+    padT = 14,
+    padB = 34;
+  const plotW = VW - padL - padR;
+  const plotH = VH - padT - padB;
+
+  const maxSec = durationSec || 1;
+  const sx = (sec) => padL + (sec / maxSec) * plotW;
+
+  // ── HR (left Y axis, red) ────────────────────────────────────────────────
+  let hrPath = "",
+    hrGridLines = "",
+    hrYLabels = "",
+    hrAvgLine = "",
+    hrAvgLabel = "";
+  let hrAxisTitle = "";
+
+  if (hasHR) {
+    const allHR = hrPoints.map((tp) => tp.hr);
+    const hrMax = Math.max(220, Math.ceil(Math.max(...allHR) / 20) * 20);
+    const hrMin = Math.max(0, Math.floor(Math.min(...allHR) / 20) * 20 - 20);
+    const hrRange = hrMax - hrMin || 1;
+    const avgHR = Math.round(allHR.reduce((s, v) => s + v, 0) / allHR.length);
+
+    const syH = (hr) => padT + plotH - ((hr - hrMin) / hrRange) * plotH;
+
+    const hrStep = hrRange <= 80 ? 20 : 40;
+    for (let v = hrMin; v <= hrMax; v += hrStep) {
+      const y = syH(v).toFixed(2);
+      hrGridLines += `<line x1="${padL}" y1="${y}" x2="${
+        VW - padR
+      }" y2="${y}" />`;
+      hrYLabels += `<text x="${padL - 8}" y="${y}" dy="0.35em">${v}</text>`;
+    }
+
+    hrPath = hrPoints
+      .map(
+        (tp, i) =>
+          (i === 0 ? "M" : "L") +
+          sx(tp.sec).toFixed(2) +
+          "," +
+          syH(tp.hr).toFixed(2)
+      )
+      .join(" ");
+
+    const avgY = syH(avgHR).toFixed(2);
+    hrAvgLine = `<line class="chart__avg-line" x1="${padL}" y1="${avgY}" x2="${
+      VW - padR
+    }" y2="${avgY}" />`;
+    hrAvgLabel = !hasCad
+      ? `<text class="chart__avg-label" x="${
+          VW - padR + 4
+        }" y="${avgY}" dy="0.35em">${avgHR}</text>`
+      : "";
+    hrAxisTitle = `<text class="chart__axis-title chart__axis-title--y"
+          transform="rotate(-90) translate(${-(
+            padT +
+            plotH / 2
+          )}, 12)">BPM</text>`;
+  }
+
+  // ── Cadence (right Y axis, green) ────────────────────────────────────────
+  let cadPath = "",
+    cadYLabels = "",
+    cadRightAxis = "",
+    cadTitle = "";
+
+  if (hasCad) {
+    const allCad = cadPoints.map((tp) => tp.cadence);
+    const cadMax = Math.max(120, Math.ceil(Math.max(...allCad) / 20) * 20);
+    const cadMin = Math.max(0, Math.floor(Math.min(...allCad) / 20) * 20 - 20);
+    const cadRange = cadMax - cadMin || 1;
+
+    const syC = (cad) => padT + plotH - ((cad - cadMin) / cadRange) * plotH;
+
+    const cadStep = cadRange <= 80 ? 20 : 40;
+    for (let v = cadMin; v <= cadMax; v += cadStep) {
+      const y = syC(v).toFixed(2);
+      cadYLabels += `<text x="${
+        VW - padR + 8
+      }" y="${y}" dy="0.35em">${v}</text>`;
+    }
+
+    cadPath = cadPoints
+      .map(
+        (tp, i) =>
+          (i === 0 ? "M" : "L") +
+          sx(tp.sec).toFixed(2) +
+          "," +
+          syC(tp.cadence).toFixed(2)
+      )
+      .join(" ");
+
+    cadRightAxis = `<line class="chart__axis" x1="${
+      VW - padR
+    }" y1="${padT}" x2="${VW - padR}" y2="${padT + plotH}" />`;
+    cadTitle = `<text class="chart__axis-title" x="${VW - padR}" y="${
+      padT - 4
+    }" text-anchor="middle">RPM</text>`;
+  }
+
+  // ── X axis ───────────────────────────────────────────────────────────────
+  const xTickInterval = maxSec <= 1800 ? 300 : 600;
+  let xLabels = "";
+  for (let s = 0; s <= maxSec; s += xTickInterval) {
+    xLabels += `<text x="${sx(s).toFixed(2)}" y="${
+      padT + plotH + 18
+    }">${Math.floor(s / 60)}m</text>`;
+  }
+
+  // ── Legend ────────────────────────────────────────────────────────────────
+  let legend = "";
+  const legendItems = [];
+  if (hasHR)
+    legendItems.push(
+      `<line x1="0" y1="0" x2="14" y2="0" class="chart__hr-line" /><text x="18" dy="0.35em" class="chart__legend-label">Heart Rate</text>`
+    );
+  if (hasCad)
+    legendItems.push(
+      `<line x1="${hasHR ? 90 : 0}" y1="0" x2="${
+        hasHR ? 104 : 14
+      }" y2="0" class="chart__cad-line" /><text x="${
+        hasHR ? 108 : 18
+      }" dy="0.35em" class="chart__legend-label">Cadence</text>`
+    );
+  if (legendItems.length) {
+    legend = `<g class="chart__legend" transform="translate(${padL + 8}, ${
+      padT + 8
+    })">${legendItems.join("")}</g>`;
+  }
+
+  return `
+<svg class="power-chart" viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg" aria-label="Heart rate and cadence chart">
+  <defs>
+    <clipPath id="hrCadClip">
+      <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" />
+    </clipPath>
+  </defs>
+
+  <g class="chart__grid">${hrGridLines}</g>
+
+  <g clip-path="url(#hrCadClip)">
+    ${hasHR ? `<path class="chart__hr-line"  d="${hrPath}"  />` : ""}
+    ${hasCad ? `<path class="chart__cad-line" d="${cadPath}" />` : ""}
+    ${hrAvgLine}
+  </g>
+
+  ${hrAvgLabel}
+
+  <line class="chart__axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${
+    padT + plotH
+  }" />
+  <line class="chart__axis" x1="${padL}" y1="${padT + plotH}" x2="${
+    VW - padR
+  }" y2="${padT + plotH}" />
+  ${cadRightAxis}
+
+  <g class="chart__y-labels">${hrYLabels}</g>
+  <g class="chart__x-labels">${xLabels}</g>
+  ${
+    hasCad
+      ? `<g class="chart__y-labels chart__y-labels--cad">${cadYLabels}</g>`
+      : ""
+  }
+
+  ${hrAxisTitle}
+  <text class="chart__axis-title chart__axis-title--x" x="${
+    padL + plotW / 2
+  }" y="${VH - 2}">Time</text>
+  ${cadTitle}
+
+  ${legend}
+</svg>`.trim();
+}
+
+// ─── Render results (stats grid + charts) ────────────────────────────────────
+
+function renderResults(trackpoints, stats, athleteName, outputFilename) {
+  // Power + speed chart (always shown)
+  chartWrap.innerHTML = buildPowerChart(trackpoints, stats);
+
+  // HR + cadence chart (shown only when data is present)
+  const hrCadSvg = buildHrCadenceChart(trackpoints, stats.durationSec);
+  if (hrCadSvg) {
+    hrCadChartWrap.innerHTML = hrCadSvg;
+    hrCadChartWrap.hidden = false;
+  } else {
+    hrCadChartWrap.innerHTML = "";
+    hrCadChartWrap.hidden = true;
+  }
+
+  // Stats grid
+  const distKm = stats.totalDistMeters / 1000;
+  const distMiles = distKm * 0.621371;
+  const hours = stats.durationSec / 3600;
+  const avgSpeedMph = hours > 0 ? distMiles / hours : 0;
+  const avgSpeedKph = hours > 0 ? distKm / hours : 0;
+
+  // Compute actual HR stats from trackpoints when present
+  const hrValues = trackpoints
+    .map((tp) => tp.hr)
+    .filter((v) => v !== null && v > 0);
+  const cadValues = trackpoints
+    .map((tp) => tp.cadence)
+    .filter((v) => v !== null && v > 0);
+  const avgHR = hrValues.length
+    ? Math.round(hrValues.reduce((s, v) => s + v, 0) / hrValues.length)
+    : null;
+  const maxHR = hrValues.length ? Math.max(...hrValues) : null;
+  const avgCad = cadValues.length
+    ? Math.round(cadValues.reduce((s, v) => s + v, 0) / cadValues.length)
+    : null;
+  const maxCad = cadValues.length ? Math.max(...cadValues) : null;
+
+  const hrLabel =
+    avgHR !== null ? `${avgHR} avg / ${maxHR} max bpm` : "Not included";
+  const cadLabel =
+    avgCad !== null ? `${avgCad} avg / ${maxCad} max rpm` : "Not included";
+
+  statsGrid.innerHTML = "";
+  const rows = [
+    ["Athlete", athleteName],
+    ["Duration", formatDuration(stats.durationSec)],
+    ["Avg Power", `${stats.avgWatts} W`],
+    ["Max Power", `${stats.maxWatts} W`],
+    ...(stats.totalDistMeters > 0
+      ? [
+          ["Distance", `${distMiles.toFixed(2)} mi (${distKm.toFixed(2)} km)`],
+          [
+            "Avg Speed",
+            `${avgSpeedMph.toFixed(1)} mph (${avgSpeedKph.toFixed(1)} km/h)`,
+          ],
+        ]
+      : []),
+    ["Heart Rate", hrLabel],
+    ["Cadence", cadLabel],
+    ["Trackpoints", trackpoints.length.toLocaleString()],
+    ["Output File", outputFilename],
+  ];
+  rows.forEach(([label, value]) => {
+    statsGrid.insertAdjacentHTML(
+      "beforeend",
+      `<div class="stat"><dt>${label}</dt><dd>${value}</dd></div>`
+    );
+  });
+}
+
 // ─── Convert ─────────────────────────────────────────────────────────────────
 
-convertBtn.addEventListener('click', () => {
+convertBtn.addEventListener("click", () => {
   if (!currentFile) return;
 
   convertBtn.disabled = true;
-  convertBtn.textContent = 'Converting…';
+  convertBtn.textContent = "Converting…";
 
   const reader = new FileReader();
 
@@ -575,85 +975,67 @@ convertBtn.addEventListener('click', () => {
       currentWorkout = PerfProConverter.parse3dp(e.target.result);
     } catch (err) {
       convertBtn.disabled = false;
-      convertBtn.textContent = 'Convert';
+      convertBtn.textContent = "Convert";
       showError(`Parse error: ${err.message}`);
       return;
     }
 
     // Read chosen start time from the picker (treat as local time)
     const pickerValue = startDateInput.value; // "YYYY-MM-DDTHH:MM"
-    const startTime   = pickerValue ? new Date(pickerValue) : new Date();
+    const startTime = pickerValue ? new Date(pickerValue) : new Date();
 
     let outputContent;
     let outputFilename;
     let mimeType;
 
-    const format = document.getElementById('formatSelect').value;
+    const format = document.getElementById("formatSelect").value;
 
-    if (format === 'tcx') {
-      outputContent  = PerfProConverter.buildTcx(currentWorkout, startTime);
-      outputFilename = currentFile.name.replace(/\.3dp$/i, '.tcx');
-      mimeType       = 'application/xml';
-    } else if (format === 'fit') {
-      outputContent  = PerfProConverter.buildFit(currentWorkout, startTime);
-      outputFilename = currentFile.name.replace(/\.3dp$/i, '.fit');
-      mimeType       = 'application/octet-stream';
+    if (format === "tcx") {
+      outputContent = PerfProConverter.buildTcx(currentWorkout, startTime);
+      outputFilename = currentFile.name.replace(/\.3dp$/i, ".tcx");
+      mimeType = "application/xml";
+    } else if (format === "fit") {
+      outputContent = PerfProConverter.buildFit(currentWorkout, startTime);
+      outputFilename = currentFile.name.replace(/\.3dp$/i, ".fit");
+      mimeType = "application/octet-stream";
     }
 
     const blob = new Blob([outputContent], { type: mimeType });
     currentOutput = { blob, filename: outputFilename };
 
-    // Build stats display
-    const { stats, athleteName } = currentWorkout;
-    statsGrid.innerHTML = '';
+    renderResults(
+      currentWorkout.trackpoints,
+      currentWorkout.stats,
+      currentWorkout.athleteName,
+      outputFilename
+    );
 
-    // Build power chart
-    chartWrap.innerHTML = buildPowerChart(currentWorkout.trackpoints, stats);
-
-    const distKm    = stats.totalDistMeters / 1000;
-    const distMiles = distKm * 0.621371;
-    const hours     = stats.durationSec / 3600;
-    const avgSpeedMph = hours > 0 ? distMiles / hours : 0;
-    const avgSpeedKph = hours > 0 ? distKm    / hours : 0;
-
-    const rows = [
-      ['Athlete',      athleteName],
-      ['Duration',     formatDuration(stats.durationSec)],
-      ['Avg Power',    `${stats.avgWatts} W`],
-      ['Max Power',    `${stats.maxWatts} W`],
-      ...(stats.totalDistMeters > 0 ? [
-        ['Distance',   `${distMiles.toFixed(2)} mi (${distKm.toFixed(2)} km)`],
-        ['Avg Speed',  `${avgSpeedMph.toFixed(1)} mph (${avgSpeedKph.toFixed(1)} km/h)`],
-      ] : []),
-      ['Cadence',      stats.hasCadence ? 'Included (sensor detected)' : 'Not included (no sensor)'],
-      ['Heart Rate',   stats.hasHR      ? 'Included (HR monitor detected)' : 'Not included (no monitor)'],
-      ['Trackpoints',  currentWorkout.trackpoints.length.toLocaleString()],
-      ['Output File',  outputFilename],
-    ];
-
-    rows.forEach(([label, value]) => {
-      statsGrid.insertAdjacentHTML('beforeend',
-        `<div class="stat"><dt>${label}</dt><dd>${value}</dd></div>`
-      );
-    });
-
-    downloadBtn.textContent = format === 'fit' ? 'Download FIT' : 'Download TCX';
+    downloadBtn.textContent =
+      format === "fit" ? "Download FIT" : "Download TCX";
 
     convertBtn.disabled = false;
-    convertBtn.textContent = 'Convert';
-    showSection('resultSection');
+    convertBtn.textContent = "Convert";
+    showSection("resultSection");
 
-    uploadStravaBtn.hidden      = !PLATFORMS.strava.enabled;
-    uploadTpBtn.hidden          = !PLATFORMS.trainingpeaks.enabled;
-    uploadStatus.hidden         = true;
-    uploadStatus.innerHTML      = '';
-    uploadStatus.dataset.state  = '';
+    uploadStravaBtn.hidden = !PLATFORMS.strava.enabled;
+    uploadTpBtn.hidden = !PLATFORMS.trainingpeaks.enabled;
+    uploadStatus.hidden = true;
+    uploadStatus.innerHTML = "";
+    uploadStatus.dataset.state = "";
+
+    // Show merge panel only for FIT output
+    if (format === "fit") {
+      resetMergePanel();
+      mergeCard.hidden = false;
+    } else {
+      mergeCard.hidden = true;
+    }
   };
 
   reader.onerror = function () {
     convertBtn.disabled = false;
-    convertBtn.textContent = 'Convert';
-    showError('Could not read the file. Please try again.');
+    convertBtn.textContent = "Convert";
+    showError("Could not read the file. Please try again.");
   };
 
   reader.readAsArrayBuffer(currentFile);
@@ -661,11 +1043,11 @@ convertBtn.addEventListener('click', () => {
 
 // ─── Download ────────────────────────────────────────────────────────────────
 
-downloadBtn.addEventListener('click', () => {
+downloadBtn.addEventListener("click", () => {
   if (!currentOutput) return;
   const url = URL.createObjectURL(currentOutput.blob);
-  const a   = document.createElement('a');
-  a.href     = url;
+  const a = document.createElement("a");
+  a.href = url;
   a.download = currentOutput.filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
@@ -673,10 +1055,240 @@ downloadBtn.addEventListener('click', () => {
 
 // ─── Platform upload buttons ─────────────────────────────────────────────────
 
-uploadStravaBtn.addEventListener('click', () => startOAuth('strava'));
-uploadTpBtn.addEventListener('click',     () => startOAuth('trainingpeaks'));
+uploadStravaBtn.addEventListener("click", () => startOAuth("strava"));
+uploadTpBtn.addEventListener("click", () => startOAuth("trainingpeaks"));
 
 // ─── Reset ───────────────────────────────────────────────────────────────────
 
-resetBtn.addEventListener('click', reset);
-errorResetBtn.addEventListener('click', reset);
+resetBtn.addEventListener("click", reset);
+errorResetBtn.addEventListener("click", reset);
+
+// ─── Merge panel ─────────────────────────────────────────────────────────────
+
+const MERGE_FIELD_LABELS = {
+  hr: "Heart Rate",
+  cadence: "Cadence",
+  speed: "Speed",
+  power: "Power",
+  distMeters: "Distance",
+};
+
+// State for the currently loaded supplemental file
+let suppRecords = null;
+let suppDuration = null;
+let suppFilename = null;
+
+function formatDurationSec(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+async function handleMergeFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".fit")) {
+    showMergeStatus("error", `"${file.name}" is not a .fit file.`);
+    return;
+  }
+
+  suppFilename = file.name;
+  mergeApplyBtn.disabled = true;
+  mergeApplyBtn.textContent = "Parsing…";
+
+  let parsed;
+  try {
+    const ab = await file.arrayBuffer();
+    parsed = PerfProConverter.parseFit(ab);
+  } catch (err) {
+    showMergeStatus("error", `Could not parse FIT file: ${err.message}`);
+    mergeApplyBtn.disabled = false;
+    mergeApplyBtn.textContent = "Merge & Update Output";
+    return;
+  }
+
+  suppRecords = parsed.records;
+  suppDuration = parsed.durationSec;
+
+  // Show alignment step
+  mergePickerStep.hidden = true;
+  mergeAlignStep.hidden = false;
+
+  // File info
+  mergeFileInfo.innerHTML =
+    `<strong>${
+      file.name
+    }</strong> — ${suppRecords.length.toLocaleString()} records, ` +
+    `${formatDurationSec(suppDuration)} duration`;
+
+  // Duration comparison
+  const baseDuration = currentWorkout.stats.durationSec;
+  const diff = Math.abs(baseDuration - suppDuration);
+  let durHTML =
+    `Primary: <span>${formatDurationSec(baseDuration)}</span> &nbsp;|&nbsp; ` +
+    `Supplemental: <span>${formatDurationSec(suppDuration)}</span>`;
+  if (diff > 120) {
+    durHTML += `<span class="merge-duration-warn">Durations differ by ${formatDurationSec(
+      diff
+    )} — verify the offset below.</span>`;
+  }
+  mergeAlignDurations.innerHTML = durHTML;
+
+  // Determine which fields are available and which conflict
+  const baseTrackpoints = mergedTrackpoints || currentWorkout.trackpoints;
+  const baseHasField = {
+    hr: baseTrackpoints.some((tp) => tp.hr !== null),
+    cadence: baseTrackpoints.some((tp) => tp.cadence !== null),
+    speed: baseTrackpoints.some((tp) => tp.speed !== null),
+    power: baseTrackpoints.some((tp) => tp.watts !== 0 && tp.watts !== null),
+    distMeters: baseTrackpoints.some((tp) => tp.distMeters !== null),
+  };
+
+  mergeFields.innerHTML = `<p class="merge-fields__title">Fields in supplemental file</p>`;
+
+  for (const field of parsed.availableFields) {
+    const label = MERGE_FIELD_LABELS[field] || field;
+    const isConflict =
+      field === "power" ? baseHasField.power : baseHasField[field];
+
+    let rightHTML;
+    if (isConflict) {
+      rightHTML = `
+        <span class="merge-field-badge merge-field-badge--conflict">Conflict</span>
+        <span class="merge-field-row__conflict">
+          Use:
+          <select id="mergePref_${field}">
+            <option value="primary" selected>Primary file</option>
+            <option value="supplemental">Supplemental file</option>
+          </select>
+        </span>`;
+    } else {
+      rightHTML = `<span class="merge-field-badge merge-field-badge--new">New</span>`;
+    }
+
+    mergeFields.insertAdjacentHTML(
+      "beforeend",
+      `
+      <div class="merge-field-row">
+        <span class="merge-field-row__name">${label}</span>
+        <span style="display:flex;align-items:center;gap:0.5rem">${rightHTML}</span>
+      </div>`
+    );
+  }
+
+  mergeApplyBtn.disabled = false;
+  mergeApplyBtn.textContent = "Merge & Update Output";
+  mergeStatus.hidden = true;
+}
+
+function showMergeStatus(state, message) {
+  mergeStatus.hidden = false;
+  mergeStatus.dataset.state = state;
+  mergeStatus.textContent = message;
+}
+
+function applyMerge() {
+  if (!currentWorkout || !suppRecords) return;
+
+  const offsetSec = parseInt(mergeOffsetInput.value, 10) || 0;
+
+  // Collect field preferences from conflict selects
+  const fieldPreferences = {};
+  for (const field of Object.keys(MERGE_FIELD_LABELS)) {
+    const sel = document.getElementById(`mergePref_${field}`);
+    if (sel) fieldPreferences[field] = sel.value;
+  }
+
+  const baseTrackpoints = mergedTrackpoints || currentWorkout.trackpoints;
+  const newTrackpoints = PerfProConverter.mergeSupplementalData(
+    baseTrackpoints,
+    suppRecords,
+    offsetSec,
+    fieldPreferences
+  );
+  mergedTrackpoints = newTrackpoints;
+
+  // Recompute stats for fields that may have changed
+  const allWatts = newTrackpoints.map((tp) => tp.watts).filter((w) => w > 0);
+  const lastDist = newTrackpoints.findLast((tp) => tp.distMeters !== null);
+  const mergedStats = {
+    ...currentWorkout.stats,
+    avgWatts: allWatts.length
+      ? Math.round(allWatts.reduce((s, v) => s + v, 0) / allWatts.length)
+      : currentWorkout.stats.avgWatts,
+    maxWatts: allWatts.length
+      ? Math.max(...allWatts)
+      : currentWorkout.stats.maxWatts,
+    totalDistMeters: lastDist
+      ? lastDist.distMeters
+      : currentWorkout.stats.totalDistMeters,
+    hasCadence: newTrackpoints.some((tp) => tp.cadence !== null),
+    hasHR: newTrackpoints.some((tp) => tp.hr !== null),
+  };
+
+  // Rebuild FIT with merged data
+  const pickerValue = startDateInput.value;
+  const startTime = pickerValue ? new Date(pickerValue) : new Date();
+  const mergedWorkout = {
+    ...currentWorkout,
+    trackpoints: newTrackpoints,
+    stats: mergedStats,
+  };
+  const fitBytes = PerfProConverter.buildFit(mergedWorkout, startTime);
+  const blob = new Blob([fitBytes], { type: "application/octet-stream" });
+  currentOutput = { blob, filename: currentOutput.filename };
+
+  renderResults(
+    newTrackpoints,
+    mergedStats,
+    currentWorkout.athleteName,
+    currentOutput.filename
+  );
+
+  showMergeStatus(
+    "success",
+    "Merged successfully. Download above to get the updated file."
+  );
+
+  // Reset picker so user can add another file
+  mergePickerStep.hidden = false;
+  mergeAlignStep.hidden = true;
+  mergeFileInput.value = "";
+  suppRecords = null;
+  suppDuration = null;
+  suppFilename = null;
+}
+
+// Merge drop zone
+mergeDropZone.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  mergeDropZone.classList.add("drop-zone--active");
+});
+mergeDropZone.addEventListener("dragleave", () => {
+  mergeDropZone.classList.remove("drop-zone--active");
+});
+mergeDropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  mergeDropZone.classList.remove("drop-zone--active");
+  handleMergeFile(e.dataTransfer.files[0]);
+});
+mergeDropZone.addEventListener("click", () => mergeFileInput.click());
+mergeBrowseBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  mergeFileInput.click();
+});
+mergeFileInput.addEventListener("change", () =>
+  handleMergeFile(mergeFileInput.files[0])
+);
+
+mergeApplyBtn.addEventListener("click", applyMerge);
+mergeCancelBtn.addEventListener("click", () => {
+  suppRecords = null;
+  suppDuration = null;
+  suppFilename = null;
+  mergePickerStep.hidden = false;
+  mergeAlignStep.hidden = true;
+  mergeFileInput.value = "";
+  mergeStatus.hidden = true;
+});
