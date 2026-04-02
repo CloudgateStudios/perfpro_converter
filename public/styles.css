@@ -335,6 +335,12 @@ header h1 {
   overflow: hidden;
 }
 
+.chart-wrap--secondary {
+  margin-top: -1rem;
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+
 .power-chart {
   display: block;
   width: 100%;
@@ -412,10 +418,34 @@ header h1 {
   stroke-linecap: round;
 }
 
+/* Heart rate line */
+.chart__hr-line {
+  fill: none;
+  stroke: #f25c5c;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* Cadence line */
+.chart__cad-line {
+  fill: none;
+  stroke: #34c97a;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
 /* Right Y axis labels (speed) — text-anchor: start so they read left-to-right */
 .chart__y-labels--right text {
   text-anchor: start;
   fill: #f97316;
+}
+
+/* Right Y axis labels (cadence) */
+.chart__y-labels--cad text {
+  text-anchor: start;
+  fill: #34c97a;
 }
 
 /* Legend labels inside the chart */
@@ -474,6 +504,195 @@ header h1 {
 .upload-status a {
   color: inherit;
   text-decoration: underline;
+}
+
+/* ─── Merge card ───────────────────────────────────────────────────────────── */
+
+.merge-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.75rem;
+  margin-top: 1rem;
+}
+
+.merge-card h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 1rem;
+}
+
+.merge-hint {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+  margin-bottom: 1rem;
+}
+
+.drop-zone--merge {
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.drop-zone--merge .drop-zone__content {
+  padding: 1.5rem 1.25rem;
+  gap: 0.4rem;
+}
+
+.drop-zone--merge .drop-zone__content svg {
+  color: var(--color-muted);
+}
+
+.merge-file-info {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  margin-bottom: 1rem;
+}
+
+.merge-file-info strong {
+  color: #fff;
+}
+
+.merge-fields {
+  margin-bottom: 1rem;
+}
+
+.merge-fields__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.5rem;
+}
+
+.merge-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.4rem;
+  font-size: 0.875rem;
+}
+
+.merge-field-row__name {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.merge-field-row__conflict {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.merge-field-row__conflict select {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  padding: 0.2rem 0.4rem;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.merge-field-badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.merge-field-badge--new {
+  background: color-mix(in srgb, var(--color-success) 15%, var(--color-surface-2));
+  color: var(--color-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, var(--color-border));
+}
+
+.merge-field-badge--conflict {
+  background: color-mix(in srgb, #f5a623 15%, var(--color-surface-2));
+  color: #f5a623;
+  border: 1px solid color-mix(in srgb, #f5a623 30%, var(--color-border));
+}
+
+.merge-alignment {
+  margin-bottom: 1.25rem;
+}
+
+.merge-alignment__durations {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.merge-alignment__durations span {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.merge-alignment__durations .merge-duration-warn {
+  color: #f5a623;
+  font-weight: 500;
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.merge-alignment .option-group input[type="number"] {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  width: 100%;
+  transition: border-color 0.15s;
+}
+
+.merge-alignment .option-group input[type="number"]:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.merge-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.merge-status {
+  margin-top: 0.75rem;
+  padding: 0.65rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.merge-status[data-state="success"] {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface-2));
+  color: var(--color-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, var(--color-border));
+}
+
+.merge-status[data-state="error"] {
+  background: color-mix(in srgb, var(--color-error) 10%, var(--color-surface-2));
+  color: var(--color-error);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, var(--color-border));
 }
 
 /* ─── Footer ───────────────────────────────────────────────────────────────── */

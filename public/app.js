@@ -5,6 +5,7 @@
 let currentFile    = null;
 let currentWorkout = null;
 let currentOutput  = null; // { blob, filename }
+let mergedTrackpoints = null; // trackpoints after any supplemental merges (null = use currentWorkout's)
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 
@@ -21,10 +22,26 @@ const errorResetBtn   = document.getElementById('errorResetBtn');
 const errorMsg        = document.getElementById('errorMsg');
 const statsGrid       = document.getElementById('statsGrid');
 const chartWrap       = document.getElementById('chartWrap');
+const hrCadChartWrap  = document.getElementById('hrCadChartWrap');
 const browseBtn       = document.getElementById('browseBtn');
 const uploadStravaBtn = document.getElementById('uploadStravaBtn');
 const uploadTpBtn     = document.getElementById('uploadTpBtn');
 const uploadStatus    = document.getElementById('uploadStatus');
+
+// Merge panel
+const mergeCard        = document.getElementById('mergeCard');
+const mergeDropZone    = document.getElementById('mergeDropZone');
+const mergeBrowseBtn   = document.getElementById('mergeBrowseBtn');
+const mergeFileInput   = document.getElementById('mergeFileInput');
+const mergePickerStep  = document.getElementById('mergePickerStep');
+const mergeAlignStep   = document.getElementById('mergeAlignStep');
+const mergeFileInfo    = document.getElementById('mergeFileInfo');
+const mergeFields      = document.getElementById('mergeFields');
+const mergeAlignDurations = document.getElementById('mergeAlignDurations');
+const mergeOffsetInput = document.getElementById('mergeOffsetInput');
+const mergeApplyBtn    = document.getElementById('mergeApplyBtn');
+const mergeCancelBtn   = document.getElementById('mergeCancelBtn');
+const mergeStatus      = document.getElementById('mergeStatus');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -62,15 +79,31 @@ function showError(message) {
 }
 
 function reset() {
-  currentFile    = null;
-  currentWorkout = null;
-  currentOutput  = null;
-  fileInput.value = '';
+  currentFile       = null;
+  currentWorkout    = null;
+  currentOutput     = null;
+  mergedTrackpoints = null;
+  fileInput.value   = '';
   hideAllSections();
   dropZone.classList.remove('drop-zone--active', 'drop-zone--loaded');
   uploadStatus.hidden        = true;
   uploadStatus.innerHTML     = '';
   uploadStatus.dataset.state = '';
+  resetMergePanel();
+}
+
+function resetMergePanel() {
+  mergeCard.hidden       = true;
+  mergePickerStep.hidden = false;
+  mergeAlignStep.hidden  = true;
+  mergeFileInput.value   = '';
+  mergeOffsetInput.value = '0';
+  mergeFileInfo.innerHTML   = '';
+  mergeFields.innerHTML     = '';
+  mergeAlignDurations.innerHTML = '';
+  mergeStatus.hidden     = true;
+  mergeStatus.innerHTML  = '';
+  mergeStatus.dataset.state = '';
 }
 
 // ─── ZIP extraction ───────────────────────────────────────────────────────────
@@ -560,6 +593,186 @@ function buildPowerChart(trackpoints, stats) {
 </svg>`.trim();
 }
 
+// ─── HR / Cadence chart ───────────────────────────────────────────────────────
+
+function buildHrCadenceChart(trackpoints, durationSec) {
+  const hrPoints  = trackpoints.filter(tp => tp.hr      !== null);
+  const cadPoints = trackpoints.filter(tp => tp.cadence !== null);
+  const hasHR  = hrPoints.length  > 0;
+  const hasCad = cadPoints.length > 0;
+  if (!hasHR && !hasCad) return null;
+
+  const VW = 640, VH = 160;
+  const padL = 52, padR = hasCad ? 58 : 20, padT = 14, padB = 34;
+  const plotW = VW - padL - padR;
+  const plotH = VH - padT - padB;
+
+  const maxSec = durationSec || 1;
+  const sx = sec => padL + (sec / maxSec) * plotW;
+
+  // ── HR (left Y axis, red) ────────────────────────────────────────────────
+  let hrPath = '', hrGridLines = '', hrYLabels = '', hrAvgLine = '', hrAvgLabel = '';
+  let hrAxisTitle = '';
+
+  if (hasHR) {
+    const allHR  = hrPoints.map(tp => tp.hr);
+    const hrMax  = Math.max(220, Math.ceil(Math.max(...allHR) / 20) * 20);
+    const hrMin  = Math.max(0,   Math.floor(Math.min(...allHR) / 20) * 20 - 20);
+    const hrRange = hrMax - hrMin || 1;
+    const avgHR  = Math.round(allHR.reduce((s, v) => s + v, 0) / allHR.length);
+
+    const syH = hr => padT + plotH - ((hr - hrMin) / hrRange) * plotH;
+
+    const hrStep = hrRange <= 80 ? 20 : 40;
+    for (let v = hrMin; v <= hrMax; v += hrStep) {
+      const y = syH(v).toFixed(2);
+      hrGridLines += `<line x1="${padL}" y1="${y}" x2="${VW - padR}" y2="${y}" />`;
+      hrYLabels   += `<text x="${padL - 8}" y="${y}" dy="0.35em">${v}</text>`;
+    }
+
+    hrPath = hrPoints
+      .map((tp, i) => (i === 0 ? 'M' : 'L') + sx(tp.sec).toFixed(2) + ',' + syH(tp.hr).toFixed(2))
+      .join(' ');
+
+    const avgY = syH(avgHR).toFixed(2);
+    hrAvgLine  = `<line class="chart__avg-line" x1="${padL}" y1="${avgY}" x2="${VW - padR}" y2="${avgY}" />`;
+    hrAvgLabel = !hasCad
+      ? `<text class="chart__avg-label" x="${VW - padR + 4}" y="${avgY}" dy="0.35em">${avgHR}</text>`
+      : '';
+    hrAxisTitle = `<text class="chart__axis-title chart__axis-title--y"
+          transform="rotate(-90) translate(${-(padT + plotH / 2)}, 12)">BPM</text>`;
+  }
+
+  // ── Cadence (right Y axis, green) ────────────────────────────────────────
+  let cadPath = '', cadYLabels = '', cadRightAxis = '', cadTitle = '';
+
+  if (hasCad) {
+    const allCad = cadPoints.map(tp => tp.cadence);
+    const cadMax = Math.max(120, Math.ceil(Math.max(...allCad) / 20) * 20);
+    const cadMin = Math.max(0,   Math.floor(Math.min(...allCad) / 20) * 20 - 20);
+    const cadRange = cadMax - cadMin || 1;
+
+    const syC = cad => padT + plotH - ((cad - cadMin) / cadRange) * plotH;
+
+    const cadStep = cadRange <= 80 ? 20 : 40;
+    for (let v = cadMin; v <= cadMax; v += cadStep) {
+      const y = syC(v).toFixed(2);
+      cadYLabels += `<text x="${VW - padR + 8}" y="${y}" dy="0.35em">${v}</text>`;
+    }
+
+    cadPath = cadPoints
+      .map((tp, i) => (i === 0 ? 'M' : 'L') + sx(tp.sec).toFixed(2) + ',' + syC(tp.cadence).toFixed(2))
+      .join(' ');
+
+    cadRightAxis = `<line class="chart__axis" x1="${VW - padR}" y1="${padT}" x2="${VW - padR}" y2="${padT + plotH}" />`;
+    cadTitle     = `<text class="chart__axis-title" x="${VW - padR}" y="${padT - 4}" text-anchor="middle">RPM</text>`;
+  }
+
+  // ── X axis ───────────────────────────────────────────────────────────────
+  const xTickInterval = maxSec <= 1800 ? 300 : 600;
+  let xLabels = '';
+  for (let s = 0; s <= maxSec; s += xTickInterval) {
+    xLabels += `<text x="${sx(s).toFixed(2)}" y="${padT + plotH + 18}">${Math.floor(s / 60)}m</text>`;
+  }
+
+  // ── Legend ────────────────────────────────────────────────────────────────
+  let legend = '';
+  const legendItems = [];
+  if (hasHR)  legendItems.push(`<line x1="0" y1="0" x2="14" y2="0" class="chart__hr-line" /><text x="18" dy="0.35em" class="chart__legend-label">Heart Rate</text>`);
+  if (hasCad) legendItems.push(`<line x1="${hasHR ? 90 : 0}" y1="0" x2="${hasHR ? 104 : 14}" y2="0" class="chart__cad-line" /><text x="${hasHR ? 108 : 18}" dy="0.35em" class="chart__legend-label">Cadence</text>`);
+  if (legendItems.length) {
+    legend = `<g class="chart__legend" transform="translate(${padL + 8}, ${padT + 8})">${legendItems.join('')}</g>`;
+  }
+
+  return `
+<svg class="power-chart" viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg" aria-label="Heart rate and cadence chart">
+  <defs>
+    <clipPath id="hrCadClip">
+      <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" />
+    </clipPath>
+  </defs>
+
+  <g class="chart__grid">${hrGridLines}</g>
+
+  <g clip-path="url(#hrCadClip)">
+    ${hasHR  ? `<path class="chart__hr-line"  d="${hrPath}"  />` : ''}
+    ${hasCad ? `<path class="chart__cad-line" d="${cadPath}" />` : ''}
+    ${hrAvgLine}
+  </g>
+
+  ${hrAvgLabel}
+
+  <line class="chart__axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" />
+  <line class="chart__axis" x1="${padL}" y1="${padT + plotH}" x2="${VW - padR}" y2="${padT + plotH}" />
+  ${cadRightAxis}
+
+  <g class="chart__y-labels">${hrYLabels}</g>
+  <g class="chart__x-labels">${xLabels}</g>
+  ${hasCad ? `<g class="chart__y-labels chart__y-labels--cad">${cadYLabels}</g>` : ''}
+
+  ${hrAxisTitle}
+  <text class="chart__axis-title chart__axis-title--x" x="${padL + plotW / 2}" y="${VH - 2}">Time</text>
+  ${cadTitle}
+
+  ${legend}
+</svg>`.trim();
+}
+
+// ─── Render results (stats grid + charts) ────────────────────────────────────
+
+function renderResults(trackpoints, stats, athleteName, outputFilename) {
+  // Power + speed chart (always shown)
+  chartWrap.innerHTML = buildPowerChart(trackpoints, stats);
+
+  // HR + cadence chart (shown only when data is present)
+  const hrCadSvg = buildHrCadenceChart(trackpoints, stats.durationSec);
+  if (hrCadSvg) {
+    hrCadChartWrap.innerHTML = hrCadSvg;
+    hrCadChartWrap.hidden    = false;
+  } else {
+    hrCadChartWrap.innerHTML = '';
+    hrCadChartWrap.hidden    = true;
+  }
+
+  // Stats grid
+  const distKm      = stats.totalDistMeters / 1000;
+  const distMiles   = distKm * 0.621371;
+  const hours       = stats.durationSec / 3600;
+  const avgSpeedMph = hours > 0 ? distMiles / hours : 0;
+  const avgSpeedKph = hours > 0 ? distKm    / hours : 0;
+
+  // Compute actual HR stats from trackpoints when present
+  const hrValues  = trackpoints.map(tp => tp.hr).filter(v => v !== null && v > 0);
+  const cadValues = trackpoints.map(tp => tp.cadence).filter(v => v !== null && v > 0);
+  const avgHR  = hrValues.length  ? Math.round(hrValues.reduce((s,v) => s+v, 0)  / hrValues.length)  : null;
+  const maxHR  = hrValues.length  ? Math.max(...hrValues)  : null;
+  const avgCad = cadValues.length ? Math.round(cadValues.reduce((s,v) => s+v, 0) / cadValues.length) : null;
+  const maxCad = cadValues.length ? Math.max(...cadValues) : null;
+
+  const hrLabel  = avgHR  !== null ? `${avgHR} avg / ${maxHR} max bpm`   : 'Not included';
+  const cadLabel = avgCad !== null ? `${avgCad} avg / ${maxCad} max rpm`  : 'Not included';
+
+  statsGrid.innerHTML = '';
+  const rows = [
+    ['Athlete',     athleteName],
+    ['Duration',    formatDuration(stats.durationSec)],
+    ['Avg Power',   `${stats.avgWatts} W`],
+    ['Max Power',   `${stats.maxWatts} W`],
+    ...(stats.totalDistMeters > 0 ? [
+      ['Distance',  `${distMiles.toFixed(2)} mi (${distKm.toFixed(2)} km)`],
+      ['Avg Speed', `${avgSpeedMph.toFixed(1)} mph (${avgSpeedKph.toFixed(1)} km/h)`],
+    ] : []),
+    ['Heart Rate',  hrLabel],
+    ['Cadence',     cadLabel],
+    ['Trackpoints', trackpoints.length.toLocaleString()],
+    ['Output File', outputFilename],
+  ];
+  rows.forEach(([label, value]) => {
+    statsGrid.insertAdjacentHTML('beforeend',
+      `<div class="stat"><dt>${label}</dt><dd>${value}</dd></div>`);
+  });
+}
+
 // ─── Convert ─────────────────────────────────────────────────────────────────
 
 convertBtn.addEventListener('click', () => {
@@ -603,39 +816,7 @@ convertBtn.addEventListener('click', () => {
     const blob = new Blob([outputContent], { type: mimeType });
     currentOutput = { blob, filename: outputFilename };
 
-    // Build stats display
-    const { stats, athleteName } = currentWorkout;
-    statsGrid.innerHTML = '';
-
-    // Build power chart
-    chartWrap.innerHTML = buildPowerChart(currentWorkout.trackpoints, stats);
-
-    const distKm    = stats.totalDistMeters / 1000;
-    const distMiles = distKm * 0.621371;
-    const hours     = stats.durationSec / 3600;
-    const avgSpeedMph = hours > 0 ? distMiles / hours : 0;
-    const avgSpeedKph = hours > 0 ? distKm    / hours : 0;
-
-    const rows = [
-      ['Athlete',      athleteName],
-      ['Duration',     formatDuration(stats.durationSec)],
-      ['Avg Power',    `${stats.avgWatts} W`],
-      ['Max Power',    `${stats.maxWatts} W`],
-      ...(stats.totalDistMeters > 0 ? [
-        ['Distance',   `${distMiles.toFixed(2)} mi (${distKm.toFixed(2)} km)`],
-        ['Avg Speed',  `${avgSpeedMph.toFixed(1)} mph (${avgSpeedKph.toFixed(1)} km/h)`],
-      ] : []),
-      ['Cadence',      stats.hasCadence ? 'Included (sensor detected)' : 'Not included (no sensor)'],
-      ['Heart Rate',   stats.hasHR      ? 'Included (HR monitor detected)' : 'Not included (no monitor)'],
-      ['Trackpoints',  currentWorkout.trackpoints.length.toLocaleString()],
-      ['Output File',  outputFilename],
-    ];
-
-    rows.forEach(([label, value]) => {
-      statsGrid.insertAdjacentHTML('beforeend',
-        `<div class="stat"><dt>${label}</dt><dd>${value}</dd></div>`
-      );
-    });
+    renderResults(currentWorkout.trackpoints, currentWorkout.stats, currentWorkout.athleteName, outputFilename);
 
     downloadBtn.textContent = format === 'fit' ? 'Download FIT' : 'Download TCX';
 
@@ -648,6 +829,14 @@ convertBtn.addEventListener('click', () => {
     uploadStatus.hidden         = true;
     uploadStatus.innerHTML      = '';
     uploadStatus.dataset.state  = '';
+
+    // Show merge panel only for FIT output
+    if (format === 'fit') {
+      resetMergePanel();
+      mergeCard.hidden = false;
+    } else {
+      mergeCard.hidden = true;
+    }
   };
 
   reader.onerror = function () {
@@ -680,3 +869,202 @@ uploadTpBtn.addEventListener('click',     () => startOAuth('trainingpeaks'));
 
 resetBtn.addEventListener('click', reset);
 errorResetBtn.addEventListener('click', reset);
+
+// ─── Merge panel ─────────────────────────────────────────────────────────────
+
+const MERGE_FIELD_LABELS = {
+  hr:         'Heart Rate',
+  cadence:    'Cadence',
+  speed:      'Speed',
+  power:      'Power',
+  distMeters: 'Distance',
+};
+
+// State for the currently loaded supplemental file
+let suppRecords   = null;
+let suppDuration  = null;
+let suppFilename  = null;
+
+function formatDurationSec(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+async function handleMergeFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.fit')) {
+    showMergeStatus('error', `"${file.name}" is not a .fit file.`);
+    return;
+  }
+
+  suppFilename = file.name;
+  mergeApplyBtn.disabled = true;
+  mergeApplyBtn.textContent = 'Parsing…';
+
+  let parsed;
+  try {
+    const ab = await file.arrayBuffer();
+    parsed = PerfProConverter.parseFit(ab);
+  } catch (err) {
+    showMergeStatus('error', `Could not parse FIT file: ${err.message}`);
+    mergeApplyBtn.disabled = false;
+    mergeApplyBtn.textContent = 'Merge & Update Output';
+    return;
+  }
+
+  suppRecords  = parsed.records;
+  suppDuration = parsed.durationSec;
+
+  // Show alignment step
+  mergePickerStep.hidden = true;
+  mergeAlignStep.hidden  = false;
+
+  // File info
+  mergeFileInfo.innerHTML =
+    `<strong>${file.name}</strong> — ${suppRecords.length.toLocaleString()} records, ` +
+    `${formatDurationSec(suppDuration)} duration`;
+
+  // Duration comparison
+  const baseDuration = currentWorkout.stats.durationSec;
+  const diff = Math.abs(baseDuration - suppDuration);
+  let durHTML =
+    `Primary: <span>${formatDurationSec(baseDuration)}</span> &nbsp;|&nbsp; ` +
+    `Supplemental: <span>${formatDurationSec(suppDuration)}</span>`;
+  if (diff > 120) {
+    durHTML += `<span class="merge-duration-warn">Durations differ by ${formatDurationSec(diff)} — verify the offset below.</span>`;
+  }
+  mergeAlignDurations.innerHTML = durHTML;
+
+  // Determine which fields are available and which conflict
+  const baseTrackpoints = mergedTrackpoints || currentWorkout.trackpoints;
+  const baseHasField = {
+    hr:         baseTrackpoints.some(tp => tp.hr         !== null),
+    cadence:    baseTrackpoints.some(tp => tp.cadence    !== null),
+    speed:      baseTrackpoints.some(tp => tp.speed      !== null),
+    power:      baseTrackpoints.some(tp => tp.watts      !== 0 && tp.watts !== null),
+    distMeters: baseTrackpoints.some(tp => tp.distMeters !== null),
+  };
+
+  mergeFields.innerHTML = `<p class="merge-fields__title">Fields in supplemental file</p>`;
+
+  for (const field of parsed.availableFields) {
+    const label = MERGE_FIELD_LABELS[field] || field;
+    const isConflict = field === 'power' ? baseHasField.power : baseHasField[field];
+
+    let rightHTML;
+    if (isConflict) {
+      rightHTML = `
+        <span class="merge-field-badge merge-field-badge--conflict">Conflict</span>
+        <span class="merge-field-row__conflict">
+          Use:
+          <select id="mergePref_${field}">
+            <option value="primary" selected>Primary file</option>
+            <option value="supplemental">Supplemental file</option>
+          </select>
+        </span>`;
+    } else {
+      rightHTML = `<span class="merge-field-badge merge-field-badge--new">New</span>`;
+    }
+
+    mergeFields.insertAdjacentHTML('beforeend', `
+      <div class="merge-field-row">
+        <span class="merge-field-row__name">${label}</span>
+        <span style="display:flex;align-items:center;gap:0.5rem">${rightHTML}</span>
+      </div>`);
+  }
+
+  mergeApplyBtn.disabled = false;
+  mergeApplyBtn.textContent = 'Merge & Update Output';
+  mergeStatus.hidden = true;
+}
+
+function showMergeStatus(state, message) {
+  mergeStatus.hidden       = false;
+  mergeStatus.dataset.state = state;
+  mergeStatus.textContent  = message;
+}
+
+function applyMerge() {
+  if (!currentWorkout || !suppRecords) return;
+
+  const offsetSec = parseInt(mergeOffsetInput.value, 10) || 0;
+
+  // Collect field preferences from conflict selects
+  const fieldPrefs = {};
+  for (const field of Object.keys(MERGE_FIELD_LABELS)) {
+    const sel = document.getElementById(`mergePref_${field}`);
+    if (sel) fieldPrefs[field] = sel.value;
+  }
+
+  const baseTrackpoints = mergedTrackpoints || currentWorkout.trackpoints;
+  const newTrackpoints = PerfProConverter.mergeSupplementalData(
+    baseTrackpoints, suppRecords, offsetSec, fieldPrefs
+  );
+  mergedTrackpoints = newTrackpoints;
+
+  // Recompute stats for fields that may have changed
+  const allWatts = newTrackpoints.map(tp => tp.watts).filter(w => w > 0);
+  const lastDist = newTrackpoints.findLast(tp => tp.distMeters !== null);
+  const mergedStats = {
+    ...currentWorkout.stats,
+    avgWatts:        allWatts.length ? Math.round(allWatts.reduce((s,v) => s+v, 0) / allWatts.length) : currentWorkout.stats.avgWatts,
+    maxWatts:        allWatts.length ? Math.max(...allWatts) : currentWorkout.stats.maxWatts,
+    totalDistMeters: lastDist ? lastDist.distMeters : currentWorkout.stats.totalDistMeters,
+    hasCadence:      newTrackpoints.some(tp => tp.cadence !== null),
+    hasHR:           newTrackpoints.some(tp => tp.hr      !== null),
+  };
+
+  // Rebuild FIT with merged data
+  const pickerValue = startDateInput.value;
+  const startTime   = pickerValue ? new Date(pickerValue) : new Date();
+  const mergedWorkout = { ...currentWorkout, trackpoints: newTrackpoints, stats: mergedStats };
+  const fitBytes = PerfProConverter.buildFit(mergedWorkout, startTime);
+  const blob = new Blob([fitBytes], { type: 'application/octet-stream' });
+  currentOutput = { blob, filename: currentOutput.filename };
+
+  renderResults(newTrackpoints, mergedStats, currentWorkout.athleteName, currentOutput.filename);
+
+  showMergeStatus('success', 'Merged successfully. Download above to get the updated file.');
+
+  // Reset picker so user can add another file
+  mergePickerStep.hidden = false;
+  mergeAlignStep.hidden  = true;
+  mergeFileInput.value   = '';
+  suppRecords  = null;
+  suppDuration = null;
+  suppFilename = null;
+}
+
+// Merge drop zone
+mergeDropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  mergeDropZone.classList.add('drop-zone--active');
+});
+mergeDropZone.addEventListener('dragleave', () => {
+  mergeDropZone.classList.remove('drop-zone--active');
+});
+mergeDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  mergeDropZone.classList.remove('drop-zone--active');
+  handleMergeFile(e.dataTransfer.files[0]);
+});
+mergeDropZone.addEventListener('click', () => mergeFileInput.click());
+mergeBrowseBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  mergeFileInput.click();
+});
+mergeFileInput.addEventListener('change', () => handleMergeFile(mergeFileInput.files[0]));
+
+mergeApplyBtn.addEventListener('click', applyMerge);
+mergeCancelBtn.addEventListener('click', () => {
+  suppRecords  = null;
+  suppDuration = null;
+  suppFilename = null;
+  mergePickerStep.hidden = false;
+  mergeAlignStep.hidden  = true;
+  mergeFileInput.value   = '';
+  mergeStatus.hidden     = true;
+});
