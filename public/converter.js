@@ -527,11 +527,17 @@ ${tpXml}
   function parseFit(arrayBuffer) {
     const FIT_EPOCH = 631065600; // Dec 31 1989 00:00:00 UTC as Unix seconds
     const bytes = new Uint8Array(arrayBuffer);
-    const view  = new DataView(arrayBuffer);
+    const view = new DataView(arrayBuffer);
 
-    if (bytes.length < 14) throw new Error('File is too small to be a valid FIT file.');
-    if (bytes[8] !== 0x2e || bytes[9] !== 0x46 || bytes[10] !== 0x49 || bytes[11] !== 0x54) {
-      throw new Error('Not a valid FIT file (missing .FIT magic bytes).');
+    if (bytes.length < 14)
+      throw new Error("File is too small to be a valid FIT file.");
+    if (
+      bytes[8] !== 0x2e ||
+      bytes[9] !== 0x46 ||
+      bytes[10] !== 0x49 ||
+      bytes[11] !== 0x54
+    ) {
+      throw new Error("Not a valid FIT file (missing .FIT magic bytes).");
     }
 
     const headerSize = bytes[0];
@@ -564,29 +570,37 @@ ${tpXml}
       }
 
       const isDefinition = (header & 0x40) !== 0;
-      const localType    = header & 0x0f;
+      const localType = header & 0x0f;
 
       if (isDefinition) {
         // Definition message
         pos += 1; // header
         pos += 1; // reserved
-        const arch   = bytes[pos]; pos += 1; // 0 = little-endian, 1 = big-endian
-        const le     = arch === 0;
-        const globalId = le ? view.getUint16(pos, true) : view.getUint16(pos, false);
+        const arch = bytes[pos];
+        pos += 1; // 0 = little-endian, 1 = big-endian
+        const le = arch === 0;
+        const globalId = le
+          ? view.getUint16(pos, true)
+          : view.getUint16(pos, false);
         pos += 2;
-        const fieldCount = bytes[pos]; pos += 1;
+        const fieldCount = bytes[pos];
+        pos += 1;
 
         const fields = [];
         for (let i = 0; i < fieldCount; i++) {
-          const defNum   = bytes[pos];     pos += 1;
-          const size     = bytes[pos];     pos += 1;
-          const baseType = bytes[pos];     pos += 1;
+          const defNum = bytes[pos];
+          pos += 1;
+          const size = bytes[pos];
+          pos += 1;
+          const baseType = bytes[pos];
+          pos += 1;
           fields.push({ defNum, size, baseType });
         }
 
         // Skip developer fields if present (header bit 5)
         if (header & 0x20) {
-          const devFieldCount = bytes[pos]; pos += 1;
+          const devFieldCount = bytes[pos];
+          pos += 1;
           for (let i = 0; i < devFieldCount; i++) {
             pos += 3; // field_num, size, dev_data_index
           }
@@ -616,8 +630,12 @@ ${tpXml}
 
       // Global message 20 = record — extract fields we care about
       const le = def.le;
-      let timestamp = null, hr = null, cadence = null;
-      let speed = null, power = null, distMeters = null;
+      let timestamp = null,
+        hr = null,
+        cadence = null;
+      let speed = null,
+        power = null,
+        distMeters = null;
 
       let fieldPos = pos;
       for (const f of def.fields) {
@@ -632,7 +650,9 @@ ${tpXml}
         // 253 = timestamp (uint32, FIT epoch)
         const dn = f.defNum;
         if (dn === 253 && f.size === 4) {
-          const v = le ? view.getUint32(fieldPos, true) : view.getUint32(fieldPos, false);
+          const v = le
+            ? view.getUint32(fieldPos, true)
+            : view.getUint32(fieldPos, false);
           if (v !== 0xffffffff) timestamp = v;
         } else if (dn === 3 && f.size === 1) {
           const v = bytes[fieldPos];
@@ -641,19 +661,29 @@ ${tpXml}
           const v = bytes[fieldPos];
           if (v !== 0xff) cadence = v;
         } else if (dn === 5 && f.size === 4) {
-          const v = le ? view.getUint32(fieldPos, true) : view.getUint32(fieldPos, false);
+          const v = le
+            ? view.getUint32(fieldPos, true)
+            : view.getUint32(fieldPos, false);
           if (v !== 0xffffffff) distMeters = v / 100;
         } else if (dn === 6 && f.size === 2) {
-          const v = le ? view.getUint16(fieldPos, true) : view.getUint16(fieldPos, false);
+          const v = le
+            ? view.getUint16(fieldPos, true)
+            : view.getUint16(fieldPos, false);
           if (v !== 0xffff) speed = v / 1000; // m/s
         } else if (dn === 7 && f.size === 2) {
-          const v = le ? view.getUint16(fieldPos, true) : view.getUint16(fieldPos, false);
+          const v = le
+            ? view.getUint16(fieldPos, true)
+            : view.getUint16(fieldPos, false);
           if (v !== 0xffff) power = v;
         } else if ((dn === 136 || dn === 73) && f.size === 4) {
-          const v = le ? view.getUint32(fieldPos, true) : view.getUint32(fieldPos, false);
+          const v = le
+            ? view.getUint32(fieldPos, true)
+            : view.getUint32(fieldPos, false);
           if (v !== 0xffffffff) speed = v / 1000; // enhanced_speed (field 136 or 73) overrides speed
         } else if (dn === 141 && f.size === 4) {
-          const v = le ? view.getUint32(fieldPos, true) : view.getUint32(fieldPos, false);
+          const v = le
+            ? view.getUint32(fieldPos, true)
+            : view.getUint32(fieldPos, false);
           if (v !== 0xffffffff) distMeters = v / 100; // enhanced_distance overrides distance
         }
         fieldPos += f.size;
@@ -666,28 +696,29 @@ ${tpXml}
       records.push({ fitTs: timestamp, hr, cadence, speed, power, distMeters });
     }
 
-    if (records.length === 0) throw new Error('No data records found in FIT file.');
+    if (records.length === 0)
+      throw new Error("No data records found in FIT file.");
 
     // Convert FIT timestamps to elapsed seconds from first record
     const firstTs = records[0].fitTs;
-    const lastTs  = records[records.length - 1].fitTs;
+    const lastTs = records[records.length - 1].fitTs;
     const durationSec = lastTs - firstTs;
 
     const availableFields = new Set();
     for (const r of records) {
-      if (r.hr       !== null) availableFields.add('hr');
-      if (r.cadence  !== null) availableFields.add('cadence');
-      if (r.speed    !== null) availableFields.add('speed');
-      if (r.power    !== null) availableFields.add('power');
-      if (r.distMeters !== null) availableFields.add('distMeters');
+      if (r.hr !== null) availableFields.add("hr");
+      if (r.cadence !== null) availableFields.add("cadence");
+      if (r.speed !== null) availableFields.add("speed");
+      if (r.power !== null) availableFields.add("power");
+      if (r.distMeters !== null) availableFields.add("distMeters");
     }
 
-    const out = records.map(r => ({
-      elapsed:    r.fitTs - firstTs,
-      hr:         r.hr,
-      cadence:    r.cadence,
-      speed:      r.speed,
-      power:      r.power,
+    const out = records.map((r) => ({
+      elapsed: r.fitTs - firstTs,
+      hr: r.hr,
+      cadence: r.cadence,
+      speed: r.speed,
+      power: r.power,
       distMeters: r.distMeters,
     }));
 
@@ -699,23 +730,29 @@ ${tpXml}
    * Alignment is by elapsed time. offsetSec shifts the supplemental timeline:
    * positive means the supplemental file started later than the base.
    *
-   * fieldPrefs: object mapping field name → 'primary' | 'supplemental'
+   * fieldPreferences: object mapping field name → 'primary' | 'supplemental'
    * (only relevant when both files contain the same field; defaults to 'primary')
    *
    * @param  {Array}  baseTrackpoints  — workout trackpoints from parse3dp
    * @param  {Array}  suppRecords      — records from parseFit
    * @param  {number} offsetSec
-   * @param  {Object} fieldPrefs
+   * @param  {Object} fieldPreferences
    * @returns {Array}  new trackpoints array
    */
-  function mergeSupplementalData(baseTrackpoints, suppRecords, offsetSec, fieldPrefs) {
+  function mergeSupplementalData(
+    baseTrackpoints,
+    suppRecords,
+    offsetSec,
+    fieldPreferences
+  ) {
     if (!suppRecords || suppRecords.length === 0) return baseTrackpoints;
 
     // Build a lookup: elapsed → nearest supplemental record (binary search)
-    const elapsedArr = suppRecords.map(r => r.elapsed);
+    const elapsedArr = suppRecords.map((r) => r.elapsed);
 
     function nearest(targetElapsed) {
-      let lo = 0, hi = elapsedArr.length - 1;
+      let lo = 0,
+        hi = elapsedArr.length - 1;
       while (lo < hi) {
         const mid = (lo + hi) >>> 1;
         if (elapsedArr[mid] < targetElapsed) lo = mid + 1;
@@ -724,18 +761,21 @@ ${tpXml}
       // lo is the first index >= targetElapsed
       if (lo > 0) {
         const before = Math.abs(elapsedArr[lo - 1] - targetElapsed);
-        const after  = Math.abs(elapsedArr[lo]     - targetElapsed);
+        const after = Math.abs(elapsedArr[lo] - targetElapsed);
         return before <= after ? suppRecords[lo - 1] : suppRecords[lo];
       }
       return suppRecords[lo];
     }
 
-    const prefs = fieldPrefs || {};
+    const preferences = fieldPreferences || {};
 
-    return baseTrackpoints.map(tp => {
+    return baseTrackpoints.map((tp) => {
       const targetElapsed = tp.sec - offsetSec;
       // If target is outside the supplemental file's range, skip merging
-      if (targetElapsed < -5 || targetElapsed > suppRecords[suppRecords.length - 1].elapsed + 5) {
+      if (
+        targetElapsed < -5 ||
+        targetElapsed > suppRecords[suppRecords.length - 1].elapsed + 5
+      ) {
         return tp;
       }
       const supp = nearest(targetElapsed);
@@ -743,23 +783,30 @@ ${tpXml}
       const merged = { ...tp };
 
       // For each supplemental field, apply if: base is null, or pref is 'supplemental'
-      const fields = ['hr', 'cadence', 'speed', 'distMeters'];
+      const fields = ["hr", "cadence", "speed", "distMeters"];
       for (const field of fields) {
         if (supp[field] === null) continue;
-        const baseVal = field === 'hr' ? tp.hr : field === 'cadence' ? tp.cadence : field === 'speed' ? tp.speed : tp.distMeters;
-        const pref = prefs[field] || 'primary';
-        if (baseVal === null || pref === 'supplemental') {
-          if (field === 'hr')         merged.hr         = supp.hr;
-          else if (field === 'cadence') merged.cadence  = supp.cadence;
-          else if (field === 'speed')   merged.speed    = supp.speed;
-          else if (field === 'distMeters') merged.distMeters = supp.distMeters;
+        const baseVal =
+          field === "hr"
+            ? tp.hr
+            : field === "cadence"
+            ? tp.cadence
+            : field === "speed"
+            ? tp.speed
+            : tp.distMeters;
+        const pref = preferences[field] || "primary";
+        if (baseVal === null || pref === "supplemental") {
+          if (field === "hr") merged.hr = supp.hr;
+          else if (field === "cadence") merged.cadence = supp.cadence;
+          else if (field === "speed") merged.speed = supp.speed;
+          else if (field === "distMeters") merged.distMeters = supp.distMeters;
         }
       }
 
       // Power: separate mapping key
       if (supp.power !== null) {
-        const pref = prefs['power'] || 'primary';
-        if (tp.watts === 0 || pref === 'supplemental') {
+        const pref = preferences["power"] || "primary";
+        if (tp.watts === 0 || pref === "supplemental") {
           merged.watts = supp.power;
         }
       }
@@ -770,5 +817,12 @@ ${tpXml}
 
   // ─── Expose public API ────────────────────────────────────────────────────────
 
-  global.PerfProConverter = { parse3dp, buildTcx, buildFit, extractStartTime, parseFit, mergeSupplementalData };
+  global.PerfProConverter = {
+    parse3dp,
+    buildTcx,
+    buildFit,
+    extractStartTime,
+    parseFit,
+    mergeSupplementalData,
+  };
 })(window);
